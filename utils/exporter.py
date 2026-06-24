@@ -5,11 +5,13 @@ import docx
 def format_timestamp(seconds: float) -> str:
     if seconds < 0:
         raise ValueError("Thời gian không được âm")
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
+    total_ms = int(round(seconds * 1000))
+    h = total_ms // 3600000
+    m = (total_ms % 3600000) // 60000
+    s = (total_ms % 60000) // 1000
+    ms = total_ms % 1000
     return f"[{h:02d}:{m:02d}:{s:02d}.{ms:03d}]"
+
 
 def export_to_markdown(segments: list, include_timestamps: bool) -> io.BytesIO:
     bio = io.BytesIO()

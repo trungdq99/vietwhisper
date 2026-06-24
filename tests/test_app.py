@@ -44,8 +44,9 @@ def test_app_renders():
     at = AppTest.from_file(app_path, default_timeout=30)
     at.run()
     assert not at.exception
-    assert len(at.title) > 0
-    assert "VietWhisper" in at.title[0].value
+    assert len(at.markdown) > 0
+    assert any("VietWhisper" in m.value for m in at.markdown)
+
 
 @patch("utils.transcriber.force_clear_gpu_cache")
 def test_clear_gpu_cache(mock_clear_gpu):

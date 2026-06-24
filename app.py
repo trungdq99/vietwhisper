@@ -131,7 +131,7 @@ if "processing" not in st.session_state:
     st.session_state.processing = False
 
 # 4. Header Section
-st.title("🎙️ VietWhisper")
+st.markdown('<h1 class="main-title">🎙️ VietWhisper</h1>', unsafe_allow_html=True)
 st.markdown('<p class="subtitle">Ứng dụng chuyển đổi âm thanh tiếng Việt sang văn bản chất lượng cao, tối ưu Apple Silicon GPU</p>', unsafe_allow_html=True)
 
 # 5. UI Layout - Sidebar Configuration
@@ -216,43 +216,48 @@ with col_left:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            for idx, item in enumerate(st.session_state.queue):
-                if item["status"] == "Hoàn thành":
-                    continue
+            try:
+                for idx, item in enumerate(st.session_state.queue):
+                    if item["status"] == "Hoàn thành":
+                        continue
+                    
+                    # Update status and render UI live at the spot
+                    st.session_state.queue[idx]["status"] = "Đang xử lý"
+                    render_queue()
+                    status_text.text(f"Đang xử lý: {item['name']}...")
+                    
+                    suffix = os.path.splitext(item["name"])[1]
+                    tmp_file_path = None
+                    try:
+                        # Write uploaded file in chunks to prevent OOM
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                            tmp_file_path = tmp_file.name
+                            CHUNK_SIZE = 1024 * 1024  # 1MB
+                            file_data = item["file"]
+                            file_data.seek(0)
+                            while chunk := file_data.read(CHUNK_SIZE):
+                                tmp_file.write(chunk)
+                        
+                        result = transcribe_audio(tmp_file_path, model_name=model_name)
+                        st.session_state.results[item["name"]] = result
+                        st.session_state.queue[idx]["status"] = "Hoàn thành"
+                    except Exception as e:
+                        st.session_state.queue[idx]["status"] = "Lỗi"
+                        st.error(f"Lỗi khi xử lý file {item['name']}: {str(e)}")
+                    finally:
+                        if tmp_file_path and os.path.exists(tmp_file_path):
+                            os.remove(tmp_file_path)
+                    
+                    render_queue()
+                    progress = int((idx + 1) / len(st.session_state.queue) * 100)
+                    progress_bar.progress(progress)
                 
-                # Update status and render UI live at the spot
-                st.session_state.queue[idx]["status"] = "Đang xử lý"
-                render_queue()
-                status_text.text(f"Đang xử lý: {item['name']}...")
-                
-                # Write uploaded file in chunks to prevent OOM
-                suffix = os.path.splitext(item["name"])[1]
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                    CHUNK_SIZE = 1024 * 1024  # 1MB
-                    file_data = item["file"]
-                    file_data.seek(0)
-                    while chunk := file_data.read(CHUNK_SIZE):
-                        tmp_file.write(chunk)
-                    tmp_file_path = tmp_file.name
-                
-                try:
-                    result = transcribe_audio(tmp_file_path, model_name=model_name)
-                    st.session_state.results[item["name"]] = result
-                    st.session_state.queue[idx]["status"] = "Hoàn thành"
-                except Exception as e:
-                    st.session_state.queue[idx]["status"] = "Lỗi"
-                    st.error(f"Lỗi khi xử lý file {item['name']}: {str(e)}")
-                finally:
-                    if os.path.exists(tmp_file_path):
-                        os.remove(tmp_file_path)
-                
-                render_queue()
-                progress = int((idx + 1) / len(st.session_state.queue) * 100)
-                progress_bar.progress(progress)
+                status_text.text("Đã hoàn thành nhận dạng tất cả các tệp âm thanh.")
+            finally:
+                st.session_state.processing = False
             
-            st.session_state.processing = False
-            status_text.text("Đã hoàn thành nhận dạng tất cả các tệp âm thanh.")
             st.rerun() if hasattr(st, "rerun") else st.experimental_rerun()
+
 
 with col_right:
     st.markdown("### 📝 Kết quả & Tải về")

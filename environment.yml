@@ -5,7 +5,9 @@ channels:
 dependencies:
   - python=3.10
   - ffmpeg
+  - scipy
   - lxml
   - pip
   - pip:
       - -r requirements.txt
+
