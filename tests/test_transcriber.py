@@ -112,3 +112,11 @@ def test_get_whisper_model(mock_load_model):
     result = get_whisper_model("some-model")
     assert result == "mocked_model"
     mock_load_model.assert_called_once_with("some-model")
+
+def test_validate_audio_file_ffprobe_missing(tmp_path):
+    temp_file = tmp_path / "test.mp3"
+    temp_file.write_bytes(b"dummy audio content")
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        # Should not raise FileNotFoundError, it should pass gracefully
+        validate_audio_file(str(temp_file))
+

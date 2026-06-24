@@ -3,9 +3,10 @@ import mlx.core as mx
 import os
 import gc
 import subprocess
+from typing import Any
 import streamlit as st
 
-def validate_audio_file(file_path: str):
+def validate_audio_file(file_path: str) -> None:
     """Kiểm tra định dạng, dung lượng và tính toàn vẹn của tệp âm thanh."""
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Không tìm thấy file: {file_path}")
@@ -36,7 +37,7 @@ def validate_audio_file(file_path: str):
         raise ValueError(f"Kiểm tra tính toàn vẹn thất bại: {str(e)}")
 
 @st.cache_resource
-def get_whisper_model(model_name: str):
+def get_whisper_model(model_name: str) -> Any:
     """Load và cache mô hình Whisper trong bộ nhớ để tái sử dụng."""
     from mlx_whisper.load_models import load_model
     return load_model(model_name)
@@ -72,7 +73,7 @@ def transcribe_audio(file_path: str, model_name: str = "mlx-community/whisper-la
         
     return result
 
-def force_clear_gpu_cache():
+def force_clear_gpu_cache() -> None:
     """Giải phóng hoàn toàn bộ nhớ cache của mô hình và Metal GPU."""
     from mlx_whisper.transcribe import ModelHolder
     ModelHolder.model = None
@@ -86,3 +87,4 @@ def force_clear_gpu_cache():
         
     gc.collect()
     mx.metal.clear_cache()
+
