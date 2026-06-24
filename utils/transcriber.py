@@ -48,6 +48,11 @@ def transcribe_audio(file_path: str, model_name: str = "mlx-community/whisper-la
     """
     validate_audio_file(file_path)
     
+    # Gán mô hình từ cache Streamlit vào ModelHolder của mlx_whisper để tránh tải lại (gây trùng lặp bộ nhớ)
+    from mlx_whisper.transcribe import ModelHolder
+    ModelHolder.model = get_whisper_model(model_name)
+    ModelHolder.model_path = model_name
+    
     try:
         # Cấu hình các tham số lọc khoảng lặng và phòng lặp từ ảo giác (hallucination)
         result = mlx_whisper.transcribe(
