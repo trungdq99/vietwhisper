@@ -1,0 +1,11 @@
+name: whisper-mac
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - ffmpeg
+  - lxml
+  - pip
+  - pip:
+      - -r requirements.txt
