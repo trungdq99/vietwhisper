@@ -5,37 +5,39 @@ from unittest.mock import MagicMock, patch
 
 import types
 
-# Mock mlx and mlx_whisper modules for non-macOS/non-MLX testing environment compatibility
-mlx = types.ModuleType('mlx')
-mlx_core = types.ModuleType('mlx.core')
-mlx_core_metal = types.ModuleType('mlx.core.metal')
-mlx_whisper = types.ModuleType('mlx_whisper')
-mlx_whisper_transcribe = types.ModuleType('mlx_whisper.transcribe')
-mlx_whisper_load_models = types.ModuleType('mlx_whisper.load_models')
+if 'mlx' not in sys.modules:
+    # Mock mlx and mlx_whisper modules for non-macOS/non-MLX testing environment compatibility
+    mlx = types.ModuleType('mlx')
+    mlx_core = types.ModuleType('mlx.core')
+    mlx_core_metal = types.ModuleType('mlx.core.metal')
+    mlx_whisper = types.ModuleType('mlx_whisper')
+    mlx_whisper_transcribe = types.ModuleType('mlx_whisper.transcribe')
+    mlx_whisper_load_models = types.ModuleType('mlx_whisper.load_models')
 
-# Wire relationships
-sys.modules['mlx'] = mlx
-sys.modules['mlx.core'] = mlx_core
-mlx.core = mlx_core
-sys.modules['mlx.core.metal'] = mlx_core_metal
-mlx_core.metal = mlx_core_metal
+    # Wire relationships
+    sys.modules['mlx'] = mlx
+    sys.modules['mlx.core'] = mlx_core
+    mlx.core = mlx_core
+    sys.modules['mlx.core.metal'] = mlx_core_metal
+    mlx_core.metal = mlx_core_metal
 
-sys.modules['mlx_whisper'] = mlx_whisper
-sys.modules['mlx_whisper.transcribe'] = mlx_whisper_transcribe
-mlx_whisper.transcribe = mlx_whisper_transcribe
-sys.modules['mlx_whisper.load_models'] = mlx_whisper_load_models
-mlx_whisper.load_models = mlx_whisper_load_models
+    sys.modules['mlx_whisper'] = mlx_whisper
+    sys.modules['mlx_whisper.transcribe'] = mlx_whisper_transcribe
+    mlx_whisper.transcribe = mlx_whisper_transcribe
+    sys.modules['mlx_whisper.load_models'] = mlx_whisper_load_models
+    mlx_whisper.load_models = mlx_whisper_load_models
 
-# Add default mocks / classes
-mlx_core_metal.clear_cache = MagicMock()
-mlx_whisper_transcribe.transcribe = MagicMock()
-mlx_whisper_load_models.load_model = MagicMock()
+    # Add default mocks / classes
+    mlx_core_metal.clear_cache = MagicMock()
+    mlx_whisper_transcribe.transcribe = MagicMock()
+    mlx_whisper_load_models.load_model = MagicMock()
 
-class MockModelHolder:
-    model = "some_model"
-    model_path = "some_path"
+    class MockModelHolder:
+        model = "some_model"
+        model_path = "some_path"
 
-mlx_whisper_transcribe.ModelHolder = MockModelHolder
+    mlx_whisper_transcribe.ModelHolder = MockModelHolder
+
 
 from utils.transcriber import validate_audio_file, transcribe_audio, force_clear_gpu_cache, get_whisper_model
 
@@ -119,4 +121,41 @@ def test_validate_audio_file_ffprobe_missing(tmp_path):
     with patch("subprocess.run", side_effect=FileNotFoundError):
         # Should not raise FileNotFoundError, it should pass gracefully
         validate_audio_file(str(temp_file))
+
+@patch("mlx_whisper.transcribe")
+@patch("mlx.core.metal.clear_cache")
+@patch("utils.transcriber.validate_audio_file")
+def test_transcribe_audio_with_progress_callback(mock_validate, mock_clear_cache, mock_transcribe, tmp_path):
+    temp_file = tmp_path / "test.mp3"
+    temp_file.write_text("dummy")
+    
+    import sys
+    import tqdm
+    transcribe_module = sys.modules.get('mlx_whisper.transcribe')
+    transcribe_module.tqdm = tqdm
+    
+    callback_calls = []
+    def dummy_callback(current, total):
+        callback_calls.append((current, total))
+        
+    mock_transcribe.return_value = {"text": "Hello", "segments": []}
+    
+    def mock_transcribe_impl(*args, **kwargs):
+        assert hasattr(transcribe_module, "tqdm")
+        with transcribe_module.tqdm.tqdm(total=100, unit="frames") as pbar:
+            pbar.update(20)
+            pbar.update(30)
+        return {"text": "Hello", "segments": []}
+        
+    mock_transcribe.side_effect = mock_transcribe_impl
+    
+    try:
+        result = transcribe_audio(str(temp_file), "mlx-community/whisper-base-4bit", progress_callback=dummy_callback)
+    finally:
+        if hasattr(transcribe_module, "tqdm"):
+            delattr(transcribe_module, "tqdm")
+            
+    assert result == {"text": "Hello", "segments": []}
+    assert len(callback_calls) == 3
+    assert callback_calls == [(0, 100), (20, 100), (50, 100)]
 

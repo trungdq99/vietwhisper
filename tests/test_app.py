@@ -3,37 +3,39 @@ from unittest.mock import MagicMock, patch
 
 import types
 
-# Mock mlx and mlx_whisper modules for non-macOS/non-MLX testing environment compatibility
-mlx = types.ModuleType('mlx')
-mlx_core = types.ModuleType('mlx.core')
-mlx_core_metal = types.ModuleType('mlx.core.metal')
-mlx_whisper = types.ModuleType('mlx_whisper')
-mlx_whisper_transcribe = types.ModuleType('mlx_whisper.transcribe')
-mlx_whisper_load_models = types.ModuleType('mlx_whisper.load_models')
+if 'mlx' not in sys.modules:
+    # Mock mlx and mlx_whisper modules for non-macOS/non-MLX testing environment compatibility
+    mlx = types.ModuleType('mlx')
+    mlx_core = types.ModuleType('mlx.core')
+    mlx_core_metal = types.ModuleType('mlx.core.metal')
+    mlx_whisper = types.ModuleType('mlx_whisper')
+    mlx_whisper_transcribe = types.ModuleType('mlx_whisper.transcribe')
+    mlx_whisper_load_models = types.ModuleType('mlx_whisper.load_models')
 
-# Wire relationships
-sys.modules['mlx'] = mlx
-sys.modules['mlx.core'] = mlx_core
-mlx.core = mlx_core
-sys.modules['mlx.core.metal'] = mlx_core_metal
-mlx_core.metal = mlx_core_metal
+    # Wire relationships
+    sys.modules['mlx'] = mlx
+    sys.modules['mlx.core'] = mlx_core
+    mlx.core = mlx_core
+    sys.modules['mlx.core.metal'] = mlx_core_metal
+    mlx_core.metal = mlx_core_metal
 
-sys.modules['mlx_whisper'] = mlx_whisper
-sys.modules['mlx_whisper.transcribe'] = mlx_whisper_transcribe
-mlx_whisper.transcribe = mlx_whisper_transcribe
-sys.modules['mlx_whisper.load_models'] = mlx_whisper_load_models
-mlx_whisper.load_models = mlx_whisper_load_models
+    sys.modules['mlx_whisper'] = mlx_whisper
+    sys.modules['mlx_whisper.transcribe'] = mlx_whisper_transcribe
+    mlx_whisper.transcribe = mlx_whisper_transcribe
+    sys.modules['mlx_whisper.load_models'] = mlx_whisper_load_models
+    mlx_whisper.load_models = mlx_whisper_load_models
 
-# Add default mocks / classes
-mlx_core_metal.clear_cache = MagicMock()
-mlx_whisper_transcribe.transcribe = MagicMock()
-mlx_whisper_load_models.load_model = MagicMock()
+    # Add default mocks / classes
+    mlx_core_metal.clear_cache = MagicMock()
+    mlx_whisper_transcribe.transcribe = MagicMock()
+    mlx_whisper_load_models.load_model = MagicMock()
 
-class MockModelHolder:
-    model = "some_model"
-    model_path = "some_path"
+    class MockModelHolder:
+        model = "some_model"
+        model_path = "some_path"
 
-mlx_whisper_transcribe.ModelHolder = MockModelHolder
+    mlx_whisper_transcribe.ModelHolder = MockModelHolder
+
 
 import pytest
 from streamlit.testing.v1 import AppTest
