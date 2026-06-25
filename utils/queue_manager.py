@@ -46,6 +46,12 @@ class QueueManager:
                 "eta": None
             }
 
+    def remove_task(self, file_name: str):
+        with self.lock:
+            if file_name in self.tasks and self.tasks[file_name]["status"] == "Chờ xử lý":
+                self.tasks.pop(file_name, None)
+                self.progress_states.pop(file_name, None)
+
     def start_worker(self, model_name: str):
         with self.lock:
             for name, task in self.tasks.items():

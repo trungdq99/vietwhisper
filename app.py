@@ -138,6 +138,8 @@ if "export_cache" not in st.session_state:
     st.session_state.export_cache = {}
 if "zip_cache" not in st.session_state:
     st.session_state.zip_cache = {}
+if "prev_completed_files" not in st.session_state:
+    st.session_state.prev_completed_files = []
 
 @st.fragment(run_every="1s")
 def render_progress_panel():
@@ -252,6 +254,12 @@ with col_left:
         accept_multiple_files=True
     )
     
+    # Đồng bộ hóa danh sách tệp chờ xử lý với QueueManager
+    uploaded_file_names = {uf.name for uf in uploaded_files} if uploaded_files else set()
+    for status_item in qm.get_status():
+        if status_item["status"] == "Chờ xử lý" and status_item["name"] not in uploaded_file_names:
+            qm.remove_task(status_item["name"])
+            
     if uploaded_files:
         # Sát nhập danh sách file upload hiện tại vào QueueManager
         for uf in uploaded_files:
@@ -292,15 +300,12 @@ with col_right:
             st.session_state.selected_file_name = options[-1] if options else None
         else:
             # Hiển thị toast thông báo file mới dịch xong
-            if "prev_completed_files" not in st.session_state:
-                st.session_state.prev_completed_files = []
-            
             new_files = [f for f in options if f not in st.session_state.prev_completed_files]
             if new_files:
                 for new_f in new_files:
                     st.toast(f"🎉 Đã dịch xong: **{new_f}**", icon="✅")
             
-            st.session_state.prev_completed_files = options.copy()
+        st.session_state.prev_completed_files = options.copy()
             
         selected_file_name = st.selectbox(
             "Chọn file để xem kết quả:",
@@ -363,34 +368,34 @@ with col_right:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document" if export_format == ".docx" else "text/markdown",
                     key="download_single_btn"
                 )
+            
+            # Lazy generate và cache file nén ZIP tổng hợp khi có >=2 file thành công
+            success_results = {k: v for k, v in st.session_state.results.items() if "error" not in v}
+            if len(success_results) > 1:
+                completed_keys = tuple(sorted(success_results.keys()))
+                zip_cache_key = (completed_keys, export_format, include_timestamps)
                 
-                # Lazy generate và cache file nén ZIP tổng hợp khi có >=2 file thành công
-                success_results = {k: v for k, v in st.session_state.results.items() if "error" not in v}
-                if len(success_results) > 1:
-                    completed_keys = tuple(sorted(success_results.keys()))
-                    zip_cache_key = (completed_keys, export_format, include_timestamps)
+                if zip_cache_key not in st.session_state.zip_cache:
+                    zip_export_files = {}
+                    for name, r in success_results.items():
+                        file_cache_key = (name, export_format, include_timestamps)
+                        if file_cache_key not in st.session_state.export_cache:
+                            segs = r.get("segments", [])
+                            if export_format == ".docx":
+                                st.session_state.export_cache[file_cache_key] = export_to_docx(segs, include_timestamps)
+                            else:
+                                st.session_state.export_cache[file_cache_key] = export_to_markdown(segs, include_timestamps)
+                        zip_export_files[os.path.splitext(name)[0] + export_format] = st.session_state.export_cache[file_cache_key]
                     
-                    if zip_cache_key not in st.session_state.zip_cache:
-                        zip_export_files = {}
-                        for name, r in success_results.items():
-                            file_cache_key = (name, export_format, include_timestamps)
-                            if file_cache_key not in st.session_state.export_cache:
-                                segs = r.get("segments", [])
-                                if export_format == ".docx":
-                                    st.session_state.export_cache[file_cache_key] = export_to_docx(segs, include_timestamps)
-                                else:
-                                    st.session_state.export_cache[file_cache_key] = export_to_markdown(segs, include_timestamps)
-                            zip_export_files[os.path.splitext(name)[0] + export_format] = st.session_state.export_cache[file_cache_key]
-                        
-                        st.session_state.zip_cache[zip_cache_key] = export_to_zip(zip_export_files)
-                        
-                    zip_bio = st.session_state.zip_cache[zip_cache_key]
-                    st.download_button(
-                        label="🗜️ Tải xuống toàn bộ tệp (.zip)",
-                        data=zip_bio,
-                        file_name="vietwhisper_transcripts.zip",
-                        mime="application/zip",
-                        key="download_zip_btn"
-                    )
+                    st.session_state.zip_cache[zip_cache_key] = export_to_zip(zip_export_files)
+                    
+                zip_bio = st.session_state.zip_cache[zip_cache_key]
+                st.download_button(
+                    label="🗜️ Tải xuống toàn bộ tệp (.zip)",
+                    data=zip_bio,
+                    file_name="vietwhisper_transcripts.zip",
+                    mime="application/zip",
+                    key="download_zip_btn"
+                )
     else:
         st.info("Chưa có kết quả. Vui lòng tải file lên và ấn nút Bắt đầu nhận diện.")

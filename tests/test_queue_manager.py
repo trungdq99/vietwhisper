@@ -132,3 +132,19 @@ def test_duplicate_task_ignored():
     qm.tasks["test.mp3"]["status"] = "Hoàn thành"
     qm.add_task("test.mp3", "/tmp/test.mp3", "base")
     assert qm.tasks["test.mp3"]["status"] == "Hoàn thành"
+
+def test_remove_task():
+    qm = QueueManager()
+    qm.add_task("test.mp3", "/tmp/test.mp3", "base")
+    assert len(qm.get_status()) == 1
+    
+    # Can remove a pending task
+    qm.remove_task("test.mp3")
+    assert len(qm.get_status()) == 0
+    
+    # Cannot remove a non-pending task
+    qm.add_task("test.mp3", "/tmp/test.mp3", "base")
+    qm.tasks["test.mp3"]["status"] = "Đang xử lý"
+    qm.remove_task("test.mp3")
+    assert len(qm.get_status()) == 1
+

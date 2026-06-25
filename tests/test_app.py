@@ -291,3 +291,37 @@ def test_app_auto_select_and_zip_button(mock_transcribe):
         zip_buttons = [b for b in download_buttons if "download_zip" in getattr(b.proto, "id", "")]
         assert len(zip_buttons) == 1
 
+def test_app_uploader_deletion_sync():
+    import os
+    from utils.queue_manager import QueueManager
+    
+    qm = QueueManager()
+    
+    app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
+    at = AppTest.from_file(app_path, default_timeout=30)
+    at.run()
+    
+    # 1. Upload two files
+    uploader = at.file_uploader[0]
+    uploader.upload("test1.mp3", b"dummy 1")
+    uploader.upload("test2.mp3", b"dummy 2")
+    at.run()
+    
+    print("Uploader type:", type(uploader))
+    print("Uploader attributes:", dir(uploader))
+    print("Uploader value:", uploader.value)
+    
+    # Verify both are registered as pending in qm
+    assert len(qm.get_status()) == 2
+    assert any(x["name"] == "test1.mp3" for x in qm.get_status())
+    assert any(x["name"] == "test2.mp3" for x in qm.get_status())
+    
+    # 2. Simulate deletion: remove test2.mp3 from the uploader session state list
+    at.session_state[uploader.id] = [uploader.value[0]]
+    at.run()
+    
+    # Verify test2.mp3 is removed from qm pending tasks, but test1.mp3 remains
+    assert len(qm.get_status()) == 1
+    assert qm.get_status()[0]["name"] == "test1.mp3"
+
+
