@@ -40,6 +40,12 @@ if 'mlx' not in sys.modules:
 import pytest
 from streamlit.testing.v1 import AppTest
 
+@pytest.fixture(autouse=True)
+def reset_singleton():
+    from utils.queue_manager import QueueManager
+    QueueManager._instance = None
+    yield
+
 def test_app_renders():
     import os
     app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
@@ -82,6 +88,7 @@ def test_clear_gpu_cache(mock_clear_gpu):
 @patch("utils.transcriber.transcribe_audio")
 def test_app_transcription_success(mock_transcribe):
     import os
+    from utils.queue_manager import QueueManager
     
     # Mock return value of transcribe_audio
     mock_transcribe.return_value = {
@@ -91,49 +98,196 @@ def test_app_transcription_success(mock_transcribe):
         ]
     }
     
-    app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
-    at = AppTest.from_file(app_path, default_timeout=30)
-    at.run()
-    
-    # Upload file
-    uploader = at.file_uploader[0]
-    uploader.upload("test.mp3", b"dummy mp3 data")
-    at.run()
-    
-    # Find start button and click
-    start_btn = [b for b in at.button if "Bắt đầu" in b.label][0]
-    start_btn.click().run()
-    
-    # Verify transcribe_audio was called
-    assert mock_transcribe.called
-    
-    # Verify preview is shown
-    markdown_texts = [m.value for m in at.markdown]
-    assert any("Xin chào thế giới." in text for text in markdown_texts)
+    def mock_start_worker(model_name):
+        qm = QueueManager()
+        for name, task in list(qm.tasks.items()):
+            if task["status"] == "Chờ xử lý":
+                qm.tasks[name]["status"] = "Đang xử lý"
+                try:
+                    result = mock_transcribe(task["temp_path"], model_name=model_name)
+                    qm.results[name] = result
+                    qm.tasks[name]["status"] = "Hoàn thành"
+                except Exception as e:
+                    qm.tasks[name]["status"] = "Lỗi"
+                    qm.results[name] = {"error": str(e)}
+        qm.current_task_id = None
+        
+    with patch("utils.queue_manager.QueueManager.start_worker", side_effect=mock_start_worker):
+        app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
+        at = AppTest.from_file(app_path, default_timeout=30)
+        at.run()
+        
+        # Upload file
+        uploader = at.file_uploader[0]
+        uploader.upload("test.mp3", b"dummy mp3 data")
+        at.run()
+        
+        # Find start button and click
+        start_btn = [b for b in at.button if "Bắt đầu" in b.label][0]
+        start_btn.click().run()
+        
+        # Verify transcribe_audio was called
+        assert mock_transcribe.called
+        
+        # Verify preview is shown
+        markdown_texts = [m.value for m in at.markdown]
+        assert any("Xin chào thế giới." in text for text in markdown_texts)
 
 @patch("utils.transcriber.transcribe_audio")
 def test_app_transcription_failure(mock_transcribe):
     import os
+    from utils.queue_manager import QueueManager
     
     # Mock transcribe_audio to raise an error
     mock_transcribe.side_effect = ValueError("Transcribe failed")
     
-    app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
-    at = AppTest.from_file(app_path, default_timeout=30)
-    at.run()
+    def mock_start_worker(model_name):
+        qm = QueueManager()
+        for name, task in list(qm.tasks.items()):
+            if task["status"] == "Chờ xử lý":
+                qm.tasks[name]["status"] = "Đang xử lý"
+                try:
+                    mock_transcribe(task["temp_path"], model_name=model_name)
+                    qm.tasks[name]["status"] = "Hoàn thành"
+                except Exception as e:
+                    qm.tasks[name]["status"] = "Lỗi"
+                    qm.results[name] = {"error": str(e)}
+        qm.current_task_id = None
+        
+    with patch("utils.queue_manager.QueueManager.start_worker", side_effect=mock_start_worker):
+        app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
+        at = AppTest.from_file(app_path, default_timeout=30)
+        at.run()
+        
+        # Upload file
+        uploader = at.file_uploader[0]
+        uploader.upload("test.mp3", b"dummy mp3 data")
+        at.run()
+        
+        # Find start button and click
+        start_btn = [b for b in at.button if "Bắt đầu" in b.label][0]
+        start_btn.click().run()
+        
+        # Verify transcribe_audio was called
+        assert mock_transcribe.called
+        
+        # Verify error is shown in UI
+        assert len(at.error) > 0
+        assert "Lỗi khi xử lý file test.mp3: Transcribe failed" in at.error[0].value
+
+@patch("utils.queue_manager.transcribe_audio")
+def test_app_transcription_callback_and_context(mock_transcribe, tmp_path):
+    import os
+    from utils.queue_manager import QueueManager
     
-    # Upload file
-    uploader = at.file_uploader[0]
-    uploader.upload("test.mp3", b"dummy mp3 data")
-    at.run()
+    # Create the temp file so os.path.exists returns True
+    temp_file = tmp_path / "test.mp3"
+    temp_file.write_text("dummy")
     
-    # Find start button and click
-    start_btn = [b for b in at.button if "Bắt đầu" in b.label][0]
-    start_btn.click().run()
+    qm = QueueManager()
+    qm.add_task("test.mp3", str(temp_file), "base")
     
-    # Verify transcribe_audio was called
-    assert mock_transcribe.called
+    def mock_transcribe_impl(path, model_name, progress_callback):
+        progress_callback(50, 100)
+        return {"text": "Hello", "segments": []}
+        
+    mock_transcribe.side_effect = mock_transcribe_impl
     
-    # Verify error is shown in UI
-    assert len(at.error) > 0
-    assert "Lỗi khi xử lý file test.mp3: Transcribe failed" in at.error[0].value
+    qm.start_worker("base")
+    qm.task_queue.join()
+    
+    status = qm.get_status()
+    assert len(status) == 1
+    assert status[0]["name"] == "test.mp3"
+    assert status[0]["status"] == "Hoàn thành"
+    assert qm.get_results()["test.mp3"] == {"text": "Hello", "segments": []}
+
+@patch("utils.transcriber.transcribe_audio")
+def test_app_partial_failures_and_download_zip(mock_transcribe):
+    import os
+    from utils.queue_manager import QueueManager
+    
+    # Mock first file success, second file failure
+    def mock_transcribe_impl(path, model_name, **kwargs):
+        if "test1.mp3" in path or "test1" in path:
+            return {"text": "Success file 1", "segments": []}
+        raise ValueError("Failed file 2")
+        
+    mock_transcribe.side_effect = mock_transcribe_impl
+    
+    def mock_start_worker(model_name):
+        qm = QueueManager()
+        for name, task in list(qm.tasks.items()):
+            if task["status"] == "Chờ xử lý":
+                qm.tasks[name]["status"] = "Đang xử lý"
+                try:
+                    result = mock_transcribe(task["temp_path"], model_name=model_name)
+                    qm.results[name] = result
+                    qm.tasks[name]["status"] = "Hoàn thành"
+                except Exception as e:
+                    qm.tasks[name]["status"] = "Lỗi"
+                    qm.results[name] = {"error": str(e)}
+        qm.current_task_id = None
+        
+    with patch("utils.queue_manager.QueueManager.start_worker", side_effect=mock_start_worker):
+        app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
+        at = AppTest.from_file(app_path, default_timeout=30)
+        at.run()
+        
+        uploader = at.file_uploader[0]
+        # Upload two files
+        uploader.upload("test1.mp3", b"dummy 1")
+        uploader.upload("test2.mp3", b"dummy 2")
+        at.run()
+        
+        start_btn = [b for b in at.button if "Bắt đầu" in b.label][0]
+        start_btn.click().run()
+        
+        # There should be only 1 successful file, so no ZIP button should be displayed
+        download_buttons = at.get("download_button")
+        zip_buttons = [b for b in download_buttons if "download_zip" in getattr(b.proto, "id", "")]
+        assert len(zip_buttons) == 0
+
+@patch("utils.transcriber.transcribe_audio")
+def test_app_auto_select_and_zip_button(mock_transcribe):
+    import os
+    from utils.queue_manager import QueueManager
+    
+    mock_transcribe.return_value = {"text": "Success", "segments": []}
+    
+    def mock_start_worker(model_name):
+        qm = QueueManager()
+        for name, task in list(qm.tasks.items()):
+            if task["status"] == "Chờ xử lý":
+                qm.tasks[name]["status"] = "Đang xử lý"
+                try:
+                    result = mock_transcribe(task["temp_path"], model_name=model_name)
+                    qm.results[name] = result
+                    qm.tasks[name]["status"] = "Hoàn thành"
+                except Exception as e:
+                    qm.tasks[name]["status"] = "Lỗi"
+                    qm.results[name] = {"error": str(e)}
+        qm.current_task_id = None
+        
+    with patch("utils.queue_manager.QueueManager.start_worker", side_effect=mock_start_worker):
+        app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
+        at = AppTest.from_file(app_path, default_timeout=30)
+        at.run()
+        
+        uploader = at.file_uploader[0]
+        uploader.upload("test1.mp3", b"dummy 1")
+        uploader.upload("test2.mp3", b"dummy 2")
+        at.run()
+        
+        start_btn = [b for b in at.button if "Bắt đầu" in b.label][0]
+        start_btn.click().run()
+        
+        # Verify selectbox value is set to the last completed file
+        selectbox = next(sb for sb in at.selectbox if sb.key == "selected_file_name")
+        assert selectbox.value == "test2.mp3"
+        
+        # ZIP button should be present since 2 files succeeded
+        download_buttons = at.get("download_button")
+        zip_buttons = [b for b in download_buttons if "download_zip" in getattr(b.proto, "id", "")]
+        assert len(zip_buttons) == 1
+

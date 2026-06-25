@@ -29,7 +29,7 @@ class QueueManager:
         self.current_task_id: Optional[str] = None
         self.progress_states: Dict[str, Dict[str, Any]] = {}
 
-    def add_task(self, file_name: str, temp_path: str, model_name: str):
+    def add_task(self, file_name: str, temp_path: str, model_name: str = "base"):
         with self.lock:
             if file_name in self.tasks and self.tasks[file_name]["status"] in ["Hoàn thành", "Chờ xử lý", "Đang xử lý"]:
                 return
@@ -45,15 +45,17 @@ class QueueManager:
                 "elapsed": 0.0,
                 "eta": None
             }
-            
-            self.task_queue.put({
-                "name": file_name,
-                "temp_path": temp_path,
-                "model_name": model_name
-            })
 
-    def start_worker(self):
+    def start_worker(self, model_name: str):
         with self.lock:
+            for name, task in self.tasks.items():
+                if task["status"] == "Chờ xử lý":
+                    self.task_queue.put({
+                        "name": name,
+                        "temp_path": task["temp_path"],
+                        "model_name": model_name
+                    })
+            
             if self.worker_thread and self.worker_thread.is_alive():
                 return
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)

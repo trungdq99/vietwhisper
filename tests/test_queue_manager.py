@@ -54,7 +54,7 @@ def test_worker_loop_transitions(mock_remove, mock_exists, mock_transcribe):
     assert qm.get_status()[0]["status"] == "Chờ xử lý"
     
     # Start worker
-    qm.start_worker()
+    qm.start_worker("base")
     
     # Wait for mock_transcribe to be called
     assert in_progress.wait(timeout=2)
@@ -82,7 +82,7 @@ def test_worker_loop_file_not_found(mock_exists):
     qm = QueueManager()
     qm.add_task("missing_file.mp3", "/tmp/missing_file.mp3", "base")
     
-    qm.start_worker()
+    qm.start_worker("base")
     qm.task_queue.join()
     
     status = qm.get_status()
