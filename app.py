@@ -360,6 +360,8 @@ with col_right:
                         st.session_state.export_cache[cache_key] = export_to_markdown(segs, include_timestamps)
                         
                 single_file_data = st.session_state.export_cache[cache_key]
+                if hasattr(single_file_data, "seek"):
+                    single_file_data.seek(0)
                 
                 st.download_button(
                     label=f"📥 Tải xuống tệp {single_file_name}",
@@ -390,6 +392,8 @@ with col_right:
                     st.session_state.zip_cache[zip_cache_key] = export_to_zip(zip_export_files)
                     
                 zip_bio = st.session_state.zip_cache[zip_cache_key]
+                if hasattr(zip_bio, "seek"):
+                    zip_bio.seek(0)
                 st.download_button(
                     label="🗜️ Tải xuống toàn bộ tệp (.zip)",
                     data=zip_bio,

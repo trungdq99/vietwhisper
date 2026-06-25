@@ -148,3 +148,15 @@ def test_remove_task():
     qm.remove_task("test.mp3")
     assert len(qm.get_status()) == 1
 
+def test_worker_loop_task_deleted():
+    qm = QueueManager()
+    qm.task_queue.put({
+        "name": "deleted_task.mp3",
+        "temp_path": "/tmp/deleted_task.mp3",
+        "model_name": "base"
+    })
+    
+    qm.start_worker("base")
+    qm.task_queue.join()
+    assert qm.current_task_id is None
+

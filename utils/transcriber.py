@@ -167,7 +167,12 @@ def transcribe_audio(
                         cb = self.cb
                         orig_tqdm = self.original_tqdm_module
                         
-                        total = kwargs.get('total') or (args[0] if len(args) > 0 else None)
+                        total = kwargs.get('total')
+                        if total is None and len(args) > 0:
+                            try:
+                                total = len(args[0])
+                            except (TypeError, AttributeError):
+                                total = None
                         unit = kwargs.get('unit') or (args[1] if len(args) > 1 else 'it')
                         
                         real_pbar = orig_tqdm.tqdm(*args, **kwargs)

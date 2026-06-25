@@ -142,7 +142,7 @@ def test_transcribe_audio_with_progress_callback(mock_validate, mock_clear_cache
     
     def mock_transcribe_impl(*args, **kwargs):
         assert hasattr(transcribe_module, "tqdm")
-        with transcribe_module.tqdm.tqdm(total=100, unit="frames") as pbar:
+        with transcribe_module.tqdm.tqdm(range(100), unit="frames") as pbar:
             pbar.update(20)
             pbar.update(30)
         return {"text": "Hello", "segments": []}

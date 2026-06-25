@@ -76,6 +76,14 @@ class QueueManager:
                 model_name = task["model_name"]
                 
                 with self.lock:
+                    if file_name not in self.tasks:
+                        if temp_path and os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except Exception:
+                                pass
+                        self.task_queue.task_done()
+                        continue
                     self.current_task_id = file_name
                     self.tasks[file_name]["status"] = "Đang xử lý"
                 
