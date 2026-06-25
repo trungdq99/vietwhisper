@@ -3,6 +3,7 @@ import queue
 import time
 import os
 import logging
+import copy
 from typing import Dict, Any, List, Optional
 from utils.transcriber import transcribe_audio
 
@@ -30,7 +31,7 @@ class QueueManager:
 
     def add_task(self, file_name: str, temp_path: str, model_name: str):
         with self.lock:
-            if file_name in self.tasks and self.tasks[file_name]["status"] == "Hoàn thành":
+            if file_name in self.tasks and self.tasks[file_name]["status"] in ["Hoàn thành", "Chờ xử lý", "Đang xử lý"]:
                 return
             
             self.tasks[file_name] = {
@@ -45,11 +46,11 @@ class QueueManager:
                 "eta": None
             }
             
-        self.task_queue.put({
-            "name": file_name,
-            "temp_path": temp_path,
-            "model_name": model_name
-        })
+            self.task_queue.put({
+                "name": file_name,
+                "temp_path": temp_path,
+                "model_name": model_name
+            })
 
     def start_worker(self):
         with self.lock:
@@ -140,7 +141,7 @@ class QueueManager:
 
     def get_results(self) -> Dict[str, Any]:
         with self.lock:
-            return self.results.copy()
+            return copy.deepcopy(self.results)
             
     def is_processing(self) -> bool:
         with self.lock:

@@ -163,28 +163,35 @@ def transcribe_audio(
                         self.original_tqdm_module = original_tqdm_module
                         self.cb = cb
                         
-                    def tqdm(self, total, unit, disable=False, **kwargs):
+                    def tqdm(self, *args, **kwargs):
                         cb = self.cb
                         orig_tqdm = self.original_tqdm_module
                         
+                        total = kwargs.get('total') or (args[0] if len(args) > 0 else None)
+                        unit = kwargs.get('unit') or (args[1] if len(args) > 1 else 'it')
+                        
+                        real_pbar = orig_tqdm.tqdm(*args, **kwargs)
+                        
                         class StreamlitTqdm:
-                            def __init__(self, total, unit, disable=False, **kwargs):
+                            def __init__(self, total, unit, real_pbar):
                                 self.total = total
                                 self.n = 0
-                                self.real_pbar = orig_tqdm.tqdm(total=total, unit=unit, disable=disable, **kwargs)
-                                try:
-                                    cb(0, total)
-                                except Exception:
-                                    pass
-                                    
+                                self.real_pbar = real_pbar
+                                if self.total is not None and self.total > 0:
+                                    try:
+                                        cb(0, self.total)
+                                    except Exception:
+                                        pass
+                                        
                             def update(self, n=1):
                                 self.n += n
                                 self.real_pbar.update(n)
-                                try:
-                                    cb(self.n, self.total)
-                                except Exception:
-                                    pass
-                                    
+                                if self.total is not None and self.total > 0:
+                                    try:
+                                        cb(self.n, self.total)
+                                    except Exception:
+                                        pass
+                                        
                             def __enter__(self):
                                 self.real_pbar.__enter__()
                                 return self
@@ -192,7 +199,7 @@ def transcribe_audio(
                             def __exit__(self, exc_type, exc_val, exc_tb):
                                 self.real_pbar.__exit__(exc_type, exc_val, exc_tb)
                                 
-                        return StreamlitTqdm(total, unit, disable, **kwargs)
+                        return StreamlitTqdm(total, unit, real_pbar)
                         
                     def __getattr__(self, name):
                         return getattr(self.original_tqdm_module, name)

@@ -106,7 +106,29 @@ def test_getters_return_copies():
     assert qm.get_status()[0]["status"] == "Chờ xử lý"
     
     # test get_results returns a copy
-    qm.results["test.mp3"] = {"text": "Original"}
+    qm.results["test.mp3"] = {"text": "Original", "segments": [{"text": "segment1"}]}
     res = qm.get_results()
-    res["test.mp3"] = {"text": "Mutated"}
-    assert qm.get_results()["test.mp3"] == {"text": "Original"}
+    res["test.mp3"]["text"] = "Mutated"
+    res["test.mp3"]["segments"][0]["text"] = "Mutated"
+    assert qm.get_results()["test.mp3"]["text"] == "Original"
+    assert qm.get_results()["test.mp3"]["segments"][0]["text"] == "segment1"
+
+def test_duplicate_task_ignored():
+    qm = QueueManager()
+    
+    # 1. Test ignoring when status is "Chờ xử lý"
+    qm.add_task("test.mp3", "/tmp/test.mp3", "base")
+    assert len(qm.get_status()) == 1
+    # Adding it again shouldn't add or raise
+    qm.add_task("test.mp3", "/tmp/test.mp3", "base")
+    assert len(qm.get_status()) == 1
+    
+    # 2. Test ignoring when status is "Đang xử lý"
+    qm.tasks["test.mp3"]["status"] = "Đang xử lý"
+    qm.add_task("test.mp3", "/tmp/test.mp3", "base")
+    assert qm.tasks["test.mp3"]["status"] == "Đang xử lý"
+    
+    # 3. Test ignoring when status is "Hoàn thành"
+    qm.tasks["test.mp3"]["status"] = "Hoàn thành"
+    qm.add_task("test.mp3", "/tmp/test.mp3", "base")
+    assert qm.tasks["test.mp3"]["status"] == "Hoàn thành"
