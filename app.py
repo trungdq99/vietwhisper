@@ -129,6 +129,12 @@ if "results" not in st.session_state:
     st.session_state.results = {}
 if "processing" not in st.session_state:
     st.session_state.processing = False
+if "last_completed_count" not in st.session_state:
+    st.session_state.last_completed_count = 0
+if "export_cache" not in st.session_state:
+    st.session_state.export_cache = {}
+if "zip_cache" not in st.session_state:
+    st.session_state.zip_cache = {}
 
 # 4. Header Section
 st.markdown('<h1 class="main-title">🎙️ VietWhisper</h1>', unsafe_allow_html=True)

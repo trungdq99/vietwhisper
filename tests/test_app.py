@@ -48,6 +48,20 @@ def test_app_renders():
     assert any("VietWhisper" in m.value for m in at.markdown)
 
 
+def test_session_state_initialization():
+    import os
+    app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
+    at = AppTest.from_file(app_path, default_timeout=30)
+    at.run()
+    assert not at.exception
+    assert at.session_state.queue == []
+    assert at.session_state.results == {}
+    assert at.session_state.processing is False
+    assert at.session_state.last_completed_count == 0
+    assert at.session_state.export_cache == {}
+    assert at.session_state.zip_cache == {}
+
+
 @patch("utils.transcriber.force_clear_gpu_cache")
 def test_clear_gpu_cache(mock_clear_gpu):
     import os
