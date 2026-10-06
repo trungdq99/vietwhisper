@@ -121,6 +121,34 @@ glass_css = """
         background: rgba(255, 255, 255, 0.1);
         border-radius: 3px;
     }
+
+    /* Fix/sticky columns layout */
+    div[data-testid="column"]:nth-of-type(1),
+    div[data-testid="stColumn"]:nth-of-type(1) {
+        position: sticky;
+        top: 24px;
+        align-self: start;
+    }
+    div[data-testid="column"]:nth-of-type(2),
+    div[data-testid="stColumn"]:nth-of-type(2) {
+        position: sticky;
+        top: 24px;
+        align-self: start;
+    }
+    div[data-testid="stHorizontalBlock"] {
+        align-items: flex-start !important;
+    }
+
+    /* Style the scrollbar for Streamlit scrollable containers */
+    div[data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar,
+    div[data-testid="stVerticalBlockBorderWrapper"] > div::-webkit-scrollbar {
+        width: 6px;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar-thumb,
+    div[data-testid="stVerticalBlockBorderWrapper"] > div::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+    }
 </style>
 """
 st.markdown(glass_css, unsafe_allow_html=True)
@@ -318,36 +346,6 @@ with col_right:
             if "error" in res:
                 st.error(f"Lỗi khi xử lý file {selected_file_name}: {res['error']}")
             else:
-                segments = res.get("segments", [])
-                
-                # Formatted Preview
-                st.markdown("#### Xem trước đoạn hội thoại:")
-                st.markdown('<div class="scroll-container">', unsafe_allow_html=True)
-                
-                html_transcript = []
-                plain_text_lines = []
-                for seg in segments:
-                    ts = format_timestamp(seg.get("start", 0.0))
-                    text = seg.get("text", "").strip()
-                    
-                    if include_timestamps:
-                        html_line = f'<div class="transcript-line"><span class="timestamp-badge">{ts}</span>{text}</div>'
-                        plain_line = f"{ts} {text}"
-                    else:
-                        html_line = f'<div class="transcript-line">{text}</div>'
-                        plain_line = text
-                    
-                    html_transcript.append(html_line)
-                    plain_text_lines.append(plain_line)
-                    
-                st.markdown("\n".join(html_transcript), unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                # Clipboard Copy native component
-                full_plain_text = "\n".join(plain_text_lines)
-                st.markdown("#### Bản thô để sao chép nhanh (Nhấp nút copy ở góc trên bên phải):")
-                st.code(full_plain_text, language="text")
-                
                 single_file_name = os.path.splitext(selected_file_name)[0] + export_format
                 cache_key = (selected_file_name, export_format, include_timestamps)
                 
@@ -363,43 +361,87 @@ with col_right:
                 if hasattr(single_file_data, "seek"):
                     single_file_data.seek(0)
                 
-                st.download_button(
-                    label=f"📥 Tải xuống tệp {single_file_name}",
-                    data=single_file_data,
-                    file_name=single_file_name,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document" if export_format == ".docx" else "text/markdown",
-                    key="download_single_btn"
-                )
-            
-            # Lazy generate và cache file nén ZIP tổng hợp khi có >=2 file thành công
-            success_results = {k: v for k, v in st.session_state.results.items() if "error" not in v}
-            if len(success_results) > 1:
-                completed_keys = tuple(sorted(success_results.keys()))
-                zip_cache_key = (completed_keys, export_format, include_timestamps)
+                # Setup download columns at the top
+                success_results = {k: v for k, v in st.session_state.results.items() if "error" not in v}
+                if len(success_results) > 1:
+                    dl_col1, dl_col2 = st.columns([1, 1])
+                else:
+                    dl_col1 = st.container()
+                    dl_col2 = None
                 
-                if zip_cache_key not in st.session_state.zip_cache:
-                    zip_export_files = {}
-                    for name, r in success_results.items():
-                        file_cache_key = (name, export_format, include_timestamps)
-                        if file_cache_key not in st.session_state.export_cache:
-                            segs = r.get("segments", [])
-                            if export_format == ".docx":
-                                st.session_state.export_cache[file_cache_key] = export_to_docx(segs, include_timestamps)
-                            else:
-                                st.session_state.export_cache[file_cache_key] = export_to_markdown(segs, include_timestamps)
-                        zip_export_files[os.path.splitext(name)[0] + export_format] = st.session_state.export_cache[file_cache_key]
+                with dl_col1:
+                    st.download_button(
+                        label=f"📥 Tải {single_file_name}",
+                        data=single_file_data,
+                        file_name=single_file_name,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document" if export_format == ".docx" else "text/markdown",
+                        key="download_single_btn",
+                        use_container_width=True
+                    )
+                
+                if dl_col2 is not None:
+                    completed_keys = tuple(sorted(success_results.keys()))
+                    zip_cache_key = (completed_keys, export_format, include_timestamps)
                     
-                    st.session_state.zip_cache[zip_cache_key] = export_to_zip(zip_export_files)
+                    if zip_cache_key not in st.session_state.zip_cache:
+                        zip_export_files = {}
+                        for name, r in success_results.items():
+                            file_cache_key = (name, export_format, include_timestamps)
+                            if file_cache_key not in st.session_state.export_cache:
+                                segs = r.get("segments", [])
+                                if export_format == ".docx":
+                                    st.session_state.export_cache[file_cache_key] = export_to_docx(segs, include_timestamps)
+                                else:
+                                    st.session_state.export_cache[file_cache_key] = export_to_markdown(segs, include_timestamps)
+                            zip_export_files[os.path.splitext(name)[0] + export_format] = st.session_state.export_cache[file_cache_key]
+                        
+                        st.session_state.zip_cache[zip_cache_key] = export_to_zip(zip_export_files)
+                        
+                    zip_bio = st.session_state.zip_cache[zip_cache_key]
+                    if hasattr(zip_bio, "seek"):
+                        zip_bio.seek(0)
+                    with dl_col2:
+                        st.download_button(
+                            label="🗜️ Tải toàn bộ (.zip)",
+                            data=zip_bio,
+                            file_name="vietwhisper_transcripts.zip",
+                            mime="application/zip",
+                            key="download_zip_btn",
+                            use_container_width=True
+                        )
+                
+                st.markdown("---")
+                
+                # Wrap ONLY the transcript preview & raw code in a scrollable Streamlit container
+                with st.container(height=600):
+                    segments = res.get("segments", [])
                     
-                zip_bio = st.session_state.zip_cache[zip_cache_key]
-                if hasattr(zip_bio, "seek"):
-                    zip_bio.seek(0)
-                st.download_button(
-                    label="🗜️ Tải xuống toàn bộ tệp (.zip)",
-                    data=zip_bio,
-                    file_name="vietwhisper_transcripts.zip",
-                    mime="application/zip",
-                    key="download_zip_btn"
-                )
+                    # Formatted Preview
+                    st.markdown("#### Xem trước đoạn hội thoại:")
+                    
+                    html_transcript = []
+                    plain_text_lines = []
+                    for seg in segments:
+                        ts = format_timestamp(seg.get("start", 0.0))
+                        text = seg.get("text", "").strip()
+                        
+                        if include_timestamps:
+                            html_line = f'<div class="transcript-line"><span class="timestamp-badge">{ts}</span>{text}</div>'
+                            plain_line = f"{ts} {text}"
+                        else:
+                            html_line = f'<div class="transcript-line">{text}</div>'
+                            plain_line = text
+                        
+                        html_transcript.append(html_line)
+                        plain_text_lines.append(plain_line)
+                        
+                    st.markdown("\n".join(html_transcript), unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    
+                    # Clipboard Copy native component
+                    full_plain_text = "\n".join(plain_text_lines)
+                    st.markdown("#### Bản thô để sao chép nhanh (Nhấp nút copy ở góc trên bên phải):")
+                    st.code(full_plain_text, language="text")
     else:
         st.info("Chưa có kết quả. Vui lòng tải file lên và ấn nút Bắt đầu nhận diện.")

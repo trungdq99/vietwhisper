@@ -1,0 +1,13 @@
+name: whisper-cuda
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.10
+  - ffmpeg
+  - scipy
+  - pip
+  - pip:
+      - -r requirements-cuda.txt
