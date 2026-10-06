@@ -98,7 +98,7 @@ def test_app_transcription_success(mock_transcribe):
         ]
     }
     
-    def mock_start_worker(model_name):
+    def mock_start_worker(model_name, batch_size=None, *args, **kwargs):
         qm = QueueManager()
         for name, task in list(qm.tasks.items()):
             if task["status"] == "Chờ xử lý":
@@ -141,7 +141,7 @@ def test_app_transcription_failure(mock_transcribe):
     # Mock transcribe_audio to raise an error
     mock_transcribe.side_effect = ValueError("Transcribe failed")
     
-    def mock_start_worker(model_name):
+    def mock_start_worker(model_name, batch_size=None, *args, **kwargs):
         qm = QueueManager()
         for name, task in list(qm.tasks.items()):
             if task["status"] == "Chờ xử lý":
@@ -215,7 +215,7 @@ def test_app_partial_failures_and_download_zip(mock_transcribe):
         
     mock_transcribe.side_effect = mock_transcribe_impl
     
-    def mock_start_worker(model_name):
+    def mock_start_worker(model_name, batch_size=None, *args, **kwargs):
         qm = QueueManager()
         for name, task in list(qm.tasks.items()):
             if task["status"] == "Chờ xử lý":
@@ -255,7 +255,7 @@ def test_app_auto_select_and_zip_button(mock_transcribe):
     
     mock_transcribe.return_value = {"text": "Success", "segments": []}
     
-    def mock_start_worker(model_name):
+    def mock_start_worker(model_name, batch_size=None, *args, **kwargs):
         qm = QueueManager()
         for name, task in list(qm.tasks.items()):
             if task["status"] == "Chờ xử lý":
@@ -323,5 +323,38 @@ def test_app_uploader_deletion_sync():
     # Verify test2.mp3 is removed from qm pending tasks, but test1.mp3 remains
     assert len(qm.get_status()) == 1
     assert qm.get_status()[0]["name"] == "test1.mp3"
+
+
+@patch("utils.transcriber.detect_backend", return_value="cuda")
+@patch("utils.transcriber.is_cuda_available", return_value=True)
+def test_app_batch_size_propagation_to_worker(mock_cuda_avail, mock_backend):
+    import os
+    from utils.queue_manager import QueueManager
+
+    start_worker_calls = []
+    def spy_start_worker(model_name, batch_size=None):
+        start_worker_calls.append((model_name, batch_size))
+
+    with patch.object(QueueManager, "start_worker", side_effect=spy_start_worker):
+        app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../app.py"))
+        at = AppTest.from_file(app_path, default_timeout=30)
+        at.run()
+
+        # Check that batch size selectbox is present for CUDA
+        batch_boxes = [sb for sb in at.selectbox if "Batch" in sb.label]
+        assert len(batch_boxes) == 1
+        assert batch_boxes[0].value == 8
+
+        # Upload a file
+        uploader = at.file_uploader[0]
+        uploader.upload("cuda_test.mp3", b"dummy cuda data")
+        at.run()
+
+        # Click start
+        start_btn = [b for b in at.button if "Bắt đầu" in b.label][0]
+        start_btn.click().run()
+
+        assert len(start_worker_calls) == 1
+        assert start_worker_calls[0][1] == 8
 
 

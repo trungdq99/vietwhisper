@@ -5,7 +5,7 @@ import os
 import logging
 import copy
 from typing import Dict, Any, List, Optional
-from utils.transcriber import transcribe_audio
+from utils.transcriber import transcribe_audio, force_clear_gpu_cache
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class QueueManager:
         self.current_task_id: Optional[str] = None
         self.progress_states: Dict[str, Dict[str, Any]] = {}
 
-    def add_task(self, file_name: str, temp_path: str, model_name: str = "base"):
+    def add_task(self, file_name: str, temp_path: str, model_name: str = "base", batch_size: Optional[int] = None):
         with self.lock:
             if file_name in self.tasks and self.tasks[file_name]["status"] in ["Hoàn thành", "Chờ xử lý", "Đang xử lý"]:
                 return
@@ -38,6 +38,8 @@ class QueueManager:
                 "name": file_name,
                 "status": "Chờ xử lý",
                 "temp_path": temp_path,
+                "model_name": model_name,
+                "batch_size": batch_size,
                 "added_at": time.time()
             }
             self.progress_states[file_name] = {
@@ -49,22 +51,37 @@ class QueueManager:
     def remove_task(self, file_name: str):
         with self.lock:
             if file_name in self.tasks and self.tasks[file_name]["status"] == "Chờ xử lý":
-                self.tasks.pop(file_name, None)
+                task = self.tasks.pop(file_name, None)
                 self.progress_states.pop(file_name, None)
+                if task and task.get("temp_path") and os.path.exists(task["temp_path"]):
+                    try:
+                        os.remove(task["temp_path"])
+                    except Exception:
+                        pass
 
-    def start_worker(self, model_name: str):
+    def start_worker(self, model_name: str, batch_size: Optional[int] = None):
         with self.lock:
             for name, task in self.tasks.items():
-                if task["status"] == "Chờ xử lý":
+                if task["status"] == "Chờ xử lý" and not task.get("_queued", False):
+                    task_batch_size = batch_size if batch_size is not None else task.get("batch_size")
+                    task["model_name"] = model_name
+                    task["batch_size"] = task_batch_size
+                    task["_queued"] = True
                     self.task_queue.put({
                         "name": name,
                         "temp_path": task["temp_path"],
-                        "model_name": model_name
+                        "model_name": model_name,
+                        "batch_size": task_batch_size
                     })
             
             if self.worker_thread and self.worker_thread.is_alive():
                 return
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+            try:
+                from streamlit.runtime.scriptrunner import add_script_run_ctx
+                add_script_run_ctx(self.worker_thread)
+            except Exception:
+                pass
             self.worker_thread.start()
 
     def _worker_loop(self):
@@ -84,6 +101,9 @@ class QueueManager:
                                 pass
                         self.task_queue.task_done()
                         continue
+                    if self.tasks[file_name]["status"] == "Hoàn thành":
+                        self.task_queue.task_done()
+                        continue
                     self.current_task_id = file_name
                     self.tasks[file_name]["status"] = "Đang xử lý"
                 
@@ -96,7 +116,7 @@ class QueueManager:
                     if processing_start_time[0] is None:
                         processing_start_time[0] = time.time()
                         
-                    progress = current / total
+                    progress = min(1.0, max(0.0, current / total))
                     elapsed = time.time() - start_time
                     elapsed_processing = time.time() - processing_start_time[0]
                     
@@ -116,14 +136,25 @@ class QueueManager:
 
                 try:
                     if os.path.exists(temp_path):
-                        result = transcribe_audio(temp_path, model_name=model_name, progress_callback=progress_callback)
+                        kwargs = {}
+                        if task.get("batch_size") is not None:
+                            kwargs["batch_size"] = task["batch_size"]
+                        result = transcribe_audio(
+                            temp_path,
+                            model_name=model_name,
+                            progress_callback=progress_callback,
+                            **kwargs
+                        )
                         with self.lock:
                             self.results[file_name] = result
                             self.tasks[file_name]["status"] = "Hoàn thành"
+                            if file_name in self.progress_states:
+                                self.progress_states[file_name]["progress"] = 1.0
                     else:
                         raise FileNotFoundError(f"Không tìm thấy file tạm: {temp_path}")
                 except Exception as e:
                     logger.error(f"Lỗi xử lý file {file_name}: {str(e)}", exc_info=True)
+                    force_clear_gpu_cache()
                     with self.lock:
                         self.tasks[file_name]["status"] = "Lỗi"
                         self.results[file_name] = {"error": str(e)}
@@ -133,6 +164,8 @@ class QueueManager:
                             os.remove(temp_path)
                         except Exception:
                             pass
+                    with self.lock:
+                        self.current_task_id = None
                     self.task_queue.task_done()
                     
             except queue.Empty:
@@ -161,4 +194,11 @@ class QueueManager:
             
     def is_processing(self) -> bool:
         with self.lock:
-            return self.current_task_id is not None
+            if self.current_task_id is not None:
+                return True
+            if not self.task_queue.empty():
+                return True
+            if self.worker_thread and self.worker_thread.is_alive():
+                if any(t["status"] in ["Chờ xử lý", "Đang xử lý"] for t in self.tasks.values()):
+                    return True
+            return False

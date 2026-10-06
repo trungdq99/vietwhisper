@@ -1,8 +1,6 @@
 name: whisper-cuda
 channels:
   - conda-forge
-  - pytorch
-  - nvidia
   - defaults
 dependencies:
   - python=3.10
@@ -11,3 +9,6 @@ dependencies:
   - pip
   - pip:
       - -r requirements-cuda.txt
+variables:
+  CT2_CUDA_ALLOCATOR: cub_caching
+

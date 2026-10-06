@@ -160,3 +160,115 @@ def test_worker_loop_task_deleted():
     qm.task_queue.join()
     assert qm.current_task_id is None
 
+
+def test_remove_task_cleans_up_temp_file(tmp_path):
+    qm = QueueManager()
+    temp_file = tmp_path / "temp_audio.mp3"
+    temp_file.write_bytes(b"dummy")
+    assert temp_file.exists()
+
+    qm.add_task("temp_audio.mp3", str(temp_file), "base")
+    assert len(qm.get_status()) == 1
+
+    qm.remove_task("temp_audio.mp3")
+    assert len(qm.get_status()) == 0
+    assert not temp_file.exists()
+
+
+@patch("utils.queue_manager.transcribe_audio")
+def test_is_processing_accuracy_and_lifecycle(mock_transcribe, tmp_path):
+    temp_file = tmp_path / "test_lifecycle.mp3"
+    temp_file.write_bytes(b"audio")
+    mock_transcribe.return_value = {"text": "done", "segments": []}
+
+    qm = QueueManager()
+    assert qm.is_processing() is False
+
+    qm.add_task("test_lifecycle.mp3", str(temp_file), "base")
+    # Immediately after start_worker, is_processing should be True (no race condition)
+    qm.start_worker("base")
+    assert qm.is_processing() is True
+
+    qm.task_queue.join()
+    # Immediately after queue join, is_processing should be False (no 3-second delay)
+    assert qm.is_processing() is False
+    assert qm.current_task_id is None
+
+
+@patch("utils.queue_manager.transcribe_audio")
+def test_queue_manager_batch_size_propagation(mock_transcribe, tmp_path):
+    temp_file = tmp_path / "test_bs.mp3"
+    temp_file.write_bytes(b"dummy")
+    mock_transcribe.return_value = {"text": "hello batched", "segments": []}
+
+    qm = QueueManager()
+    qm.add_task("test_bs.mp3", str(temp_file), model_name="large-v3", batch_size=8)
+    assert qm.tasks["test_bs.mp3"]["batch_size"] == 8
+
+    qm.start_worker("large-v3")
+    qm.task_queue.join()
+
+    mock_transcribe.assert_called_once()
+    call_kwargs = mock_transcribe.call_args.kwargs
+    assert call_kwargs.get("batch_size") == 8
+    assert qm.get_results()["test_bs.mp3"] == {"text": "hello batched", "segments": []}
+
+
+@patch("utils.queue_manager.transcribe_audio")
+def test_queue_manager_batch_size_override_in_start_worker(mock_transcribe, tmp_path):
+    temp_file = tmp_path / "test_override.mp3"
+    temp_file.write_bytes(b"dummy")
+    mock_transcribe.return_value = {"text": "override", "segments": []}
+
+    qm = QueueManager()
+    qm.add_task("test_override.mp3", str(temp_file), model_name="base", batch_size=4)
+    assert qm.tasks["test_override.mp3"]["batch_size"] == 4
+
+    qm.start_worker("large-v3", batch_size=16)
+    qm.task_queue.join()
+
+    mock_transcribe.assert_called_once()
+    call_kwargs = mock_transcribe.call_args.kwargs
+    assert call_kwargs.get("batch_size") == 16
+    assert qm.tasks["test_override.mp3"]["batch_size"] == 16
+    assert qm.tasks["test_override.mp3"]["model_name"] == "large-v3"
+
+
+@patch("utils.queue_manager.force_clear_gpu_cache")
+@patch("utils.queue_manager.transcribe_audio")
+def test_queue_manager_error_clears_gpu_cache(mock_transcribe, mock_clear_gpu, tmp_path):
+    temp_file = tmp_path / "test_err.mp3"
+    temp_file.write_bytes(b"dummy")
+    mock_transcribe.side_effect = RuntimeError("CUDA OOM error")
+
+    qm = QueueManager()
+    qm.add_task("test_err.mp3", str(temp_file), model_name="large-v3")
+    qm.start_worker("large-v3")
+    qm.task_queue.join()
+
+    assert mock_clear_gpu.called
+    assert qm.tasks["test_err.mp3"]["status"] == "Lỗi"
+    assert "CUDA OOM error" in qm.results["test_err.mp3"]["error"]
+
+
+@patch("utils.queue_manager.transcribe_audio")
+def test_queue_manager_no_duplicate_enqueue(mock_transcribe, tmp_path):
+    temp_file = tmp_path / "test_dup.mp3"
+    temp_file.write_bytes(b"dummy")
+    mock_transcribe.return_value = {"text": "dup test", "segments": []}
+
+    qm = QueueManager()
+    qm.add_task("test_dup.mp3", str(temp_file), model_name="large-v3")
+
+    # Call start_worker twice in a row before completion
+    qm.start_worker("large-v3")
+    initial_qsize = qm.task_queue.qsize()
+    qm.start_worker("large-v3")
+    # Should not add another duplicate item
+    assert qm.task_queue.qsize() == initial_qsize
+
+    qm.task_queue.join()
+    assert mock_transcribe.call_count == 1
+
+
+

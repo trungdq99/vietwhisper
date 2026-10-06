@@ -1,8 +1,16 @@
+import os
+if "CT2_CUDA_ALLOCATOR" not in os.environ:
+    os.environ["CT2_CUDA_ALLOCATOR"] = "cub_caching"
+
 import streamlit as st
 import tempfile
-import os
 import io
-from utils.transcriber import transcribe_audio, force_clear_gpu_cache
+from utils.transcriber import (
+    transcribe_audio,
+    force_clear_gpu_cache,
+    get_hardware_status,
+    get_available_models
+)
 from utils.exporter import export_to_markdown, export_to_docx, export_to_zip, format_timestamp
 from utils.queue_manager import QueueManager
 
@@ -239,22 +247,37 @@ def render_progress_panel():
 
 # 4. Header Section
 st.markdown('<h1 class="main-title">🎙️ VietWhisper</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Ứng dụng chuyển đổi âm thanh tiếng Việt sang văn bản chất lượng cao, tối ưu Apple Silicon GPU</p>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Ứng dụng chuyển đổi âm thanh tiếng Việt sang văn bản chất lượng cao, tối ưu NVIDIA CUDA (RTX 2060 12GB) & Apple Silicon</p>', unsafe_allow_html=True)
 
 # 5. UI Layout - Sidebar Configuration
 with st.sidebar:
     st.markdown("### ⚙️ Cấu hình hệ thống")
     
+    hw_info = get_hardware_status()
+    if hw_info["backend"] == "cuda":
+        st.markdown(f"**⚡ Phần cứng:** `{hw_info['device_name']}`")
+        st.caption(f"CUDA 12 | Tensor Cores FP16 | VRAM: {hw_info['vram_gb']}GB")
+    elif hw_info["backend"] == "mlx":
+        st.markdown("**⚡ Phần cứng:** `Apple Silicon (Metal)`")
+    else:
+        st.markdown("**⚡ Phần cứng:** `CPU (Faster-Whisper)`")
+
+    model_options = get_available_models(hw_info["backend"])
     model_name = st.selectbox(
-        "Mô hình Whisper (MLX):",
-        options=[
-            "mlx-community/whisper-large-v3-4bit",
-            "mlx-community/whisper-large-v3-turbo-4bit",
-            "mlx-community/whisper-base-4bit",
-            "mlx-community/whisper-large-v3"
-        ],
-        index=0
+        f"Mô hình Whisper ({hw_info['backend'].upper()}):",
+        options=model_options,
+        index=0,
+        help="Khuyến nghị: 'large-v3' cho chất lượng tiếng Việt tốt nhất trên RTX 2060 12GB VRAM." if hw_info["backend"] == "cuda" else None
     )
+
+    batch_size = None
+    if hw_info["backend"] == "cuda":
+        batch_size = st.selectbox(
+            "Kích thước Batch (Batched Inference):",
+            options=[8, 16, 4, 1],
+            index=0,
+            help="BatchedInferencePipeline giúp tăng tốc độ nhận diện gấp 3-5 lần và tối ưu hóa 12GB VRAM RTX 2060, ngăn ngừa lỗi Out-Of-Memory (OOM) trên các file ghi âm dài nhiều giờ."
+        )
     
     export_format = st.selectbox(
         "Định dạng xuất:",
@@ -266,9 +289,14 @@ with st.sidebar:
     
     st.markdown("---")
     
-    if st.button("🗑️ Giải phóng GPU Metal Cache", key="clear_gpu_btn"):
+    if st.button("🗑️ Giải phóng bộ nhớ GPU Cache", key="clear_gpu_btn"):
         force_clear_gpu_cache()
-        st.success("Đã giải phóng bộ nhớ cache của mô hình và Metal GPU.")
+        if hw_info["backend"] == "cuda":
+            st.success("Đã giải phóng bộ nhớ cache của mô hình và GPU CUDA (RTX 2060).")
+        elif hw_info["backend"] == "mlx":
+            st.success("Đã giải phóng bộ nhớ cache của mô hình và Metal GPU.")
+        else:
+            st.success("Đã giải phóng bộ nhớ cache của mô hình và RAM.")
 
 # 6. Main UI Content - File Upload & Processing
 col_left, col_right = st.columns([1, 1])
@@ -305,7 +333,7 @@ with col_left:
                         tmp_file.write(chunk)
                     temp_path = tmp_file.name
                 
-                qm.add_task(uf.name, temp_path, model_name)
+                qm.add_task(uf.name, temp_path, model_name, batch_size=batch_size)
         
         # Vẽ progress panel
         render_progress_panel()
@@ -315,7 +343,7 @@ with col_left:
         if start_btn:
             st.session_state.processing = True
             st.session_state.last_completed_count = len(st.session_state.results)
-            qm.start_worker(model_name)
+            qm.start_worker(model_name, batch_size=batch_size)
             st.rerun()
 with col_right:
     st.markdown("### 📝 Kết quả & Tải về")
@@ -385,6 +413,7 @@ with col_right:
                     
                     if zip_cache_key not in st.session_state.zip_cache:
                         zip_export_files = {}
+                        seen_zip_names = set()
                         for name, r in success_results.items():
                             file_cache_key = (name, export_format, include_timestamps)
                             if file_cache_key not in st.session_state.export_cache:
@@ -393,7 +422,15 @@ with col_right:
                                     st.session_state.export_cache[file_cache_key] = export_to_docx(segs, include_timestamps)
                                 else:
                                     st.session_state.export_cache[file_cache_key] = export_to_markdown(segs, include_timestamps)
-                            zip_export_files[os.path.splitext(name)[0] + export_format] = st.session_state.export_cache[file_cache_key]
+                            
+                            base_stem = os.path.splitext(name)[0]
+                            zip_filename = f"{base_stem}{export_format}"
+                            count = 1
+                            while zip_filename in seen_zip_names:
+                                zip_filename = f"{base_stem}_{count}{export_format}"
+                                count += 1
+                            seen_zip_names.add(zip_filename)
+                            zip_export_files[zip_filename] = st.session_state.export_cache[file_cache_key]
                         
                         st.session_state.zip_cache[zip_cache_key] = export_to_zip(zip_export_files)
                         
